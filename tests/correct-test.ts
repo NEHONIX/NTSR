@@ -16,7 +16,7 @@ const numbers: number[] = [1, 2, 3]; // Correct: all numbers
 
 function getName(): string {
   return "John Doe"; // Correct: string returned
-}
+} 
 
 function greet(name: string, age: number): void { 
   console.log(`Hello ${name}, you are ${age} years old`);

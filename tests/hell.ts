@@ -7,7 +7,7 @@ const message: string = "Hello, World!";
 const message2: string = "Hello, World!"; //fixed the type error
 console.log(message);
 console.log(message2);
-
+ 
 // complex type checking
 interface Person {
   name: string;

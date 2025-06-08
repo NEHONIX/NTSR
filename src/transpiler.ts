@@ -2,7 +2,7 @@ import { transform } from "esbuild";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { tmpdir } from "os";
-import * as ts from "typescript";
+import ts from "typescript";
 import { TranspileOptions } from "./types/index.js";
 import { Logger } from "./logger.js";
 import { TSConfigReader } from "./tsconfig.js";
@@ -243,7 +243,7 @@ export class TypeScriptTranspiler {
 
     try {
       // First, perform type checking (with fallback to regex on errors)
-      this.logger.step("Performing type checking");
+      // this.logger.step("Performing type checking");
       const diagnostics = this.typeCheck(tsCode, filename);
 
       // Filter out library-related errors and focus on user code errors

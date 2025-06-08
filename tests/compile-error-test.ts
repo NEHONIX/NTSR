@@ -3,7 +3,7 @@
 interface User {
   name: string;
   age: number;
-}
+} 
 
 // Type error: string assigned to number
 const user: User = {

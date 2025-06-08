@@ -8,7 +8,7 @@ enum Status {
   PENDING = "pending",
   RUNNING = "running", 
   COMPLETED = "completed"
-}
+} 
 
 class Application {
   private config: Config;

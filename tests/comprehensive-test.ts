@@ -73,7 +73,7 @@ function getUser(): User {
 // 6. ARRAY TYPE ERRORS
 const numbers: number[] = [1, 2, "three", 4]; // Error: string in number array
 const strings: string[] = ["a", "b", 3, "d"]; // Error: number in string array
-
+ 
 // 7. OBJECT PROPERTY ACCESS ERRORS
 const person = { name: "John", age: 30 };
 console.log(person.naem); // Error: Property 'naem' does not exist (typo)

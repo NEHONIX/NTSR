@@ -32,3 +32,4 @@ function greet(name: string, age: number): void {
 greet("Alice", "25"); // Should catch: string passed to number parameter
 
 console.log(message, person, numbers, getName());
+ 

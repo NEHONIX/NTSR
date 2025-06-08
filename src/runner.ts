@@ -57,7 +57,7 @@ export class NTSRRunner {
     args: string[]
   ): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.logger.info(`Using external runner: ${runner}`);
+      // this.logger.info(`Using external runner: ${runner}`);
 
       const child = spawn(runner, [scriptPath, ...args], {
         stdio: ["inherit", "inherit", "pipe"], // Capture stderr for error analysis
@@ -176,7 +176,7 @@ export class NTSRRunner {
 
       // Always perform type checking first (unless explicitly disabled)
       if (!options.skipTypeCheck) {
-        this.logger.step("Performing type checking");
+        // this.logger.step("Performing type checking");
         try {
           const tsCode = readFileSync(resolvedPath, "utf8");
           const diagnostics = this.transpiler.performTypeCheck(
@@ -184,9 +184,30 @@ export class NTSRRunner {
             resolvedPath
           );
 
-          if (diagnostics.length > 0) {
+          // Filter out library-related errors and focus on user code errors
+          const userErrors = diagnostics.filter((diagnostic) => {
+            const message = ts.flattenDiagnosticMessageText(
+              diagnostic.messageText,
+              "\n"
+            );
+            // Skip common library/environment errors that don't indicate real user code issues
+            const isLibraryError =
+              message.includes("Cannot find global type") ||
+              message.includes("Cannot find name 'console'") ||
+              message.includes("Cannot find name 'process'") ||
+              message.includes("Cannot find type definition file for 'node'") ||
+              message.includes("lib.dom.d.ts") ||
+              message.includes("lib.es") ||
+              message.includes("rootDir") ||
+              message.includes("Entry point of type library") ||
+              message.includes("Library '") ||
+              message.includes("specified in compilerOptions");
+            return !isLibraryError;
+          });
+
+          if (userErrors.length > 0) {
             this.logger.stepFailed("Type checking failed");
-            const errorMessages = diagnostics.map(
+            const errorMessages = userErrors.map(
               (diagnostic: ts.Diagnostic) => {
                 const message = ts.flattenDiagnosticMessageText(
                   diagnostic.messageText,
@@ -209,7 +230,7 @@ export class NTSRRunner {
             throw new Error(`TypeScript compilation errors found`);
           }
 
-          this.logger.stepSuccess("Type checking passed");
+          // this.logger.stepSuccess("Type checking passed");
         } catch (error) {
           if (
             error instanceof Error &&

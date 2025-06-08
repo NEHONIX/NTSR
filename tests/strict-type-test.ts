@@ -6,7 +6,7 @@ console.log(undefinedVariable);
 // 2. Wrong method call
 const str = "hello";
 str.nonExistentMethod();
-
+ 
 // 3. Import error
 import { NonExistentModule } from "./does-not-exist";
 
