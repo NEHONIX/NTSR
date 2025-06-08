@@ -1,0 +1,53 @@
+{
+  "name": "ntsr",
+  "version": "1.0.0",
+  "description": "NTSR - Nehonix TypeScript Runner: Simple, bulletproof TypeScript execution without configuration, built-in compilation, and smart fallbacks. Built for 'fortify2-js'.",
+  "main": "dist/NTSR.cjs",
+  "type": "module",
+  "bin": {
+    "NTSR": "./dist/NTSR.cjs"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node test.mjs",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "typescript",
+    "runner",
+    "executor",
+    "ts",
+    "compile",
+    "transpile",
+    "cli",
+    "tool"
+  ],
+  "author": "NEHONIX",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/NEHONIX/NTSR"
+  },
+  "homepage": "https://github.com/NEHONIX/NTSR#readme",
+  "bugs": {
+    "url": "https://g ithub.com/NEHONIX/NTSR/issues"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "files": [
+    "dist/",
+    "README.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "tsx": "^4.6.0",
+    "typescript": "^5.3.0"
+  },
+  "dependencies": {
+    "esbuild": "^0.25.5",
+    "nehoid": "^2.0.0",
+    "picocolors": "^1.0.0"
+  }
+}
