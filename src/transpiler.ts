@@ -1,6 +1,13 @@
 import { transform } from "esbuild";
-import { readFileSync, writeFileSync } from "fs";
-import { join, dirname, resolve } from "path";
+import {
+  readFileSync,
+  writeFileSync,
+  existsSync,
+  mkdirSync,
+  unlinkSync,
+  copyFileSync,
+} from "fs";
+import { join, dirname, resolve, relative, extname, basename } from "path";
 import { tmpdir } from "os";
 import ts from "typescript";
 import { TranspileOptions } from "./types/index.js";
@@ -8,17 +15,16 @@ import { Logger } from "./logger.js";
 import { TSConfigReader } from "./tsconfig.js";
 import { NehoID as ID } from "nehoid";
 import { __transpiler_version__ } from "./__sys__/__version_transpiler.js";
-import {
-  __allowed_ext__,
-  AllowedExtWithoutDot,
-  Loader,
-} from "./__sys__/__allowed_ext__.js";
+import { __allowed_ext__, Loader } from "./__sys__/__allowed_ext__.js";
 
 export class TypeScriptTranspiler {
   private tempFiles: string[] = [];
+  private tempDirs: string[] = [];
   private logger: Logger;
   private tsConfigReader: TSConfigReader;
   private compilerHost: ts.CompilerHost | null = null;
+  private currentTempDir: string | null = null;
+  private fileMapping: Map<string, string> = new Map(); // Original path -> Temp path mapping
 
   constructor(logger: Logger) {
     this.logger = logger.createChild("Transpiler");
@@ -167,6 +173,324 @@ export class TypeScriptTranspiler {
 
       return true;
     });
+  }
+
+  /**
+   * Preprocess TypeScript code to resolve relative imports with proper extensions
+   */
+  private preprocessImports(
+    tsCode: string,
+    filename: string,
+    format: string = "esm"
+  ): string {
+    const sourceDir = dirname(resolve(filename));
+
+    // Regular expressions to match import/export statements
+    const importRegex =
+      /(?:import\s+(?:(?:\{[^}]*\}|\*\s+as\s+\w+|\w+)(?:\s*,\s*(?:\{[^}]*\}|\*\s+as\s+\w+|\w+))*\s+from\s+)?['"`]([^'"`]+)['"`]|export\s+(?:\{[^}]*\}\s+from\s+)?['"`]([^'"`]+)['"`])/g;
+    const requireRegex = /require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+
+    let processedCode = tsCode;
+
+    // Process import/export statements
+    processedCode = processedCode.replace(
+      importRegex,
+      (match, importPath1, importPath2) => {
+        const importPath = importPath1 || importPath2;
+        if (!importPath) return match;
+
+        // Only process relative imports
+        if (importPath.startsWith("./") || importPath.startsWith("../")) {
+          const resolvedPath = this.resolveRelativeImport(
+            importPath,
+            sourceDir,
+            format
+          );
+          if (resolvedPath) {
+            return match.replace(importPath, resolvedPath);
+          }
+        }
+
+        return match;
+      }
+    );
+
+    // Process require statements
+    processedCode = processedCode.replace(
+      requireRegex,
+      (match, requirePath) => {
+        if (!requirePath) return match;
+
+        // Only process relative requires
+        if (requirePath.startsWith("./") || requirePath.startsWith("../")) {
+          const resolvedPath = this.resolveRelativeImport(
+            requirePath,
+            sourceDir,
+            format
+          );
+          if (resolvedPath) {
+            return match.replace(requirePath, resolvedPath);
+          }
+        }
+
+        return match;
+      }
+    );
+
+    return processedCode;
+  }
+
+  /**
+   * Enhanced resolve relative import with better file resolution
+   */
+  private resolveRelativeImport(
+    importPath: string,
+    sourceDir: string,
+    format: string = "esm"
+  ): string | null {
+    // If the import already has an extension, check if it exists
+    if (importPath.includes(".") && !importPath.endsWith(".")) {
+      const fullPath = resolve(sourceDir, importPath);
+      if (existsSync(fullPath)) {
+        return importPath;
+      }
+    }
+
+    // Try different extensions based on the source file type
+    const sourceExtensions = [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx",
+      ".json",
+      ".mjs",
+      ".cjs",
+    ];
+
+    // First, try with exact extensions
+    for (const ext of sourceExtensions) {
+      const pathWithExt = importPath + ext;
+      const fullPath = resolve(sourceDir, pathWithExt);
+
+      if (existsSync(fullPath)) {
+        // For TypeScript files that will be transpiled, adjust the extension
+        if ((ext === ".ts" || ext === ".tsx") && format !== "esm") {
+          const targetExt = format === "cjs" ? ".cjs" : ".mjs";
+          const adjustedPath = importPath + targetExt;
+          this.logger.verbose(
+            `Resolved ${importPath} -> ${adjustedPath} (${ext} file found, will be transpiled)`
+          );
+          return adjustedPath;
+        }
+
+        this.logger.verbose(`Resolved ${importPath} -> ${pathWithExt}`);
+        return pathWithExt;
+      }
+    }
+
+    // Try index files
+    for (const ext of sourceExtensions) {
+      const indexPath = importPath + "/index" + ext;
+      const fullPath = resolve(sourceDir, indexPath);
+
+      if (existsSync(fullPath)) {
+        // For TypeScript index files that will be transpiled, adjust the extension
+        if ((ext === ".ts" || ext === ".tsx") && format !== "esm") {
+          const targetExt = format === "cjs" ? ".cjs" : ".mjs";
+          const adjustedIndexPath = importPath + "/index" + targetExt;
+          this.logger.verbose(
+            `Resolved ${importPath} -> ${adjustedIndexPath} (${indexPath} file found, will be transpiled)`
+          );
+          return adjustedIndexPath;
+        }
+
+        this.logger.verbose(`Resolved ${importPath} -> ${indexPath}`);
+        return indexPath;
+      }
+    }
+
+    // If nothing found, return the original path and let Node.js handle it
+    this.logger.verbose(`Could not resolve relative import: ${importPath}`);
+    return null;
+  }
+
+  /**
+   * Check if an import path is relative
+   */
+  private isRelativeImport(importPath: string): boolean {
+    return importPath.startsWith("./") || importPath.startsWith("../");
+  }
+
+  /**
+   * Preprocess imports to ensure correct extensions for transpiled files
+   */
+  private preprocessImportsForTranspilation(
+    tsCode: string,
+    filename: string,
+    format: string = "esm"
+  ): string {
+    const sourceDir = dirname(resolve(filename));
+
+    // Regular expressions to match import/export statements and require calls
+    const importExportRegex = /(?:import|export).*?from\s+['"`]([^'"`]+)['"`]/g;
+    const requireRegex = /require\s*\(\s*['"`]([^'"`]+)['"`]\s*\)/g;
+
+    let processedCode = tsCode;
+
+    // Process import/export statements
+    processedCode = processedCode.replace(
+      importExportRegex,
+      (match, importPath) => {
+        if (!importPath || !this.isRelativeImport(importPath)) {
+          return match;
+        }
+
+        // Check if this import resolves to a TypeScript file that will be transpiled
+        if (this.isTypeScriptImport(importPath, sourceDir)) {
+          // Replace with the correct extension for the transpiled file
+          const targetExt =
+            format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+          const newImportPath = importPath + targetExt;
+          const updatedMatch = match.replace(importPath, newImportPath);
+          this.logger.verbose(
+            `Rewriting import: ${importPath} -> ${newImportPath}`
+          );
+          return updatedMatch;
+        }
+
+        return match;
+      }
+    );
+
+    // Process require statements
+    processedCode = processedCode.replace(
+      requireRegex,
+      (match, requirePath) => {
+        if (!requirePath || !this.isRelativeImport(requirePath)) {
+          return match;
+        }
+
+        // Check if this require resolves to a TypeScript file that will be transpiled
+        if (this.isTypeScriptImport(requirePath, sourceDir)) {
+          // Replace with the correct extension for the transpiled file
+          const targetExt =
+            format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+          const newRequirePath = requirePath + targetExt;
+          const updatedMatch = match.replace(requirePath, newRequirePath);
+          this.logger.verbose(
+            `Rewriting require: ${requirePath} -> ${newRequirePath}`
+          );
+          return updatedMatch;
+        }
+
+        return match;
+      }
+    );
+
+    return processedCode;
+  }
+
+  /**
+   * Copy dependency files that don't need transpilation
+   */
+  private async copyDependencyFile(
+    filePath: string,
+    tempDir: string,
+    sourceFile: string,
+    processedFiles: Set<string>
+  ): Promise<void> {
+    const resolvedPath = resolve(filePath);
+
+    if (processedFiles.has(resolvedPath)) {
+      return;
+    }
+
+    processedFiles.add(resolvedPath);
+
+    // Calculate relative path structure to maintain directory hierarchy
+    const sourceFileDir = dirname(resolve(sourceFile));
+    const targetPath = this.calculateTargetPath(
+      filePath,
+      sourceFileDir,
+      tempDir
+    );
+
+    // Ensure target directory exists
+    const targetDir = dirname(targetPath);
+    mkdirSync(targetDir, { recursive: true });
+
+    // Copy the file
+    copyFileSync(resolvedPath, targetPath);
+    this.tempFiles.push(targetPath);
+    this.fileMapping.set(resolvedPath, targetPath);
+
+    this.logger.verbose(`Copied dependency: ${resolvedPath} -> ${targetPath}`);
+  }
+
+  /**
+   * Calculate the target path for a dependency in the temp directory
+   */
+  private calculateTargetPath(
+    filePath: string,
+    sourceDir: string,
+    tempDir: string
+  ): string {
+    const resolvedFilePath = resolve(filePath);
+    const resolvedSourceDir = resolve(sourceDir);
+
+    // Get relative path from source directory
+    const relativePath = relative(resolvedSourceDir, resolvedFilePath);
+
+    // Join with temp directory
+    return resolve(tempDir, relativePath);
+  }
+
+  /**
+   * Calculate output path for transpiled files
+   */
+  private calculateTranspiledOutputPath(
+    filePath: string,
+    baseSourceDir: string,
+    tempDir: string,
+    format: string
+  ): string {
+    const resolvedFilePath = resolve(filePath);
+    const resolvedBaseDir = resolve(baseSourceDir);
+
+    // Get relative path and change extension
+    let relativePath = relative(resolvedBaseDir, resolvedFilePath);
+
+    // Handle case where files are not in a subdirectory of baseSourceDir
+    // This can happen when baseSourceDir is not actually a parent of filePath
+    if (
+      relativePath.startsWith("..") ||
+      require("path").isAbsolute(relativePath)
+    ) {
+      // Just use the filename if the file is outside the base directory
+      const parsedFile = require("path").parse(resolvedFilePath);
+      relativePath = parsedFile.name + parsedFile.ext;
+    }
+
+    // Change extension based on format
+    const parsedPath = require("path").parse(relativePath);
+    const newExt =
+      format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+
+    // Ensure we don't create invalid paths on Windows
+    const safePath = parsedPath.dir
+      ? join(parsedPath.dir, parsedPath.name + newExt)
+      : parsedPath.name + newExt;
+    const outputPath = join(tempDir, safePath);
+
+    return outputPath;
+  }
+
+  /**
+   * Get the main file for the current temp session
+   */
+  private getTempSessionMainFile(): string | null {
+    // This would be set when starting a transpilation session
+    return this.currentTempDir ? this.currentTempDir : null;
   }
 
   /**
@@ -355,11 +679,19 @@ export class TypeScriptTranspiler {
         });
       }
 
-      this.logger.stepComplete("Type checking passed");
+      this.logger.verbose("Type checking passed");
 
       // Proceed with transpilation using esbuild
-      this.logger.step("Transpiling with esbuild");
-      const result = await transform(tsCode, {
+      this.logger.verbose("Transpiling with esbuild");
+
+      // Pre-process imports to ensure correct extensions for transpiled files
+      const processedCode = this.preprocessImportsForTranspilation(
+        tsCode,
+        filename,
+        format
+      );
+
+      const result = await transform(processedCode, {
         loader: TypeScriptTranspiler.getLoader(filename),
         target,
         format,
@@ -372,7 +704,7 @@ export class TypeScriptTranspiler {
         logLevel: "silent", // We handle our own logging
       });
 
-      this.logger.stepComplete("Transpilation completed");
+      this.logger.verbose("Transpilation completed");
       this.logger.verbose(
         `Generated ${result.code.length} bytes of JavaScript`
       );
@@ -407,27 +739,356 @@ export class TypeScriptTranspiler {
   }
 
   /**
-   * Transpile TypeScript file and write to a temporary JavaScript file
+   * Enhanced transpile to temp file with better session management
    */
   async transpileToTempFile(
     filePath: string,
     options: TranspileOptions = {}
   ): Promise<string> {
-    const jsCode = await this.transpileFile(filePath, options);
+    // Create a unique temporary directory for this transpilation session
+    const sessionId = ID.generate({ prefix: "nehonix_tsr.dir" });
+    const tempDir = join(tmpdir(), sessionId);
+    mkdirSync(tempDir, { recursive: true });
 
-    // Choose appropriate file extension based on format
-    const { format = "esm" } = options;
-    const extension = format === "cjs" ? ".cjs" : ".mjs";
+    this.currentTempDir = tempDir;
+    this.tempDirs.push(tempDir);
 
-    const tempPath = join(
-      tmpdir(),
-      `${ID.generate({ prefix: "nehonix_tsr" })}${extension}`
+    // Clear file mapping for new session
+    this.fileMapping.clear();
+
+    try {
+      // Transpile the main file and its dependencies
+      const mainFileDir = dirname(resolve(filePath));
+      const mainTempPath = await this.transpileFileWithDependencies(
+        filePath,
+        tempDir,
+        options,
+        new Set(), // Track processed files to avoid circular dependencies
+        mainFileDir
+      );
+
+      this.logger.verbose(`Created transpilation session in: ${tempDir}`);
+      this.logger.verbose(`Main file: ${mainTempPath}`);
+
+      return mainTempPath;
+    } catch (error) {
+      this.logger.error(
+        `Transpilation session failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      throw error;
+    }
+  }
+
+  /**
+   * Enhanced transpile method with better temp file management
+   */
+  private async transpileFileWithDependencies(
+    filePath: string,
+    tempDir: string,
+    options: TranspileOptions,
+    processedFiles: Set<string>,
+    mainFileDir?: string
+  ): Promise<string> {
+    const resolvedPath = resolve(filePath);
+
+    // Avoid processing the same file twice
+    if (processedFiles.has(resolvedPath)) {
+      return this.fileMapping.get(resolvedPath) || resolvedPath;
+    }
+
+    processedFiles.add(resolvedPath);
+
+    // Read and transpile the main file
+    const tsCode = readFileSync(resolvedPath, "utf8");
+    const jsCode = await this.transpileCode(tsCode, resolvedPath, options);
+
+    // Calculate output path maintaining directory structure relative to main file
+    // Use the main file's directory as the base for relative path calculation
+    const baseDir = mainFileDir || dirname(resolvedPath);
+    const outputPath = this.calculateTranspiledOutputPath(
+      resolvedPath,
+      baseDir,
+      tempDir,
+      options.format || "esm"
     );
 
-    writeFileSync(tempPath, jsCode, "utf8");
-    this.tempFiles.push(tempPath);
+    // Ensure the directory exists
+    const outputDir = dirname(outputPath);
+    mkdirSync(outputDir, { recursive: true });
 
-    return tempPath;
+    // Write the transpiled file with debug info
+    const debugComment = `// Generated by NTSR from: ${resolvedPath}\n// Session directory: ${tempDir}\n\n`;
+    const enhancedJsCode = debugComment + jsCode;
+
+    writeFileSync(outputPath, enhancedJsCode, "utf8");
+    this.tempFiles.push(outputPath);
+    this.fileMapping.set(resolvedPath, outputPath);
+
+    // Process dependencies, passing the main file directory
+    await this.transpileDependencies(
+      resolvedPath,
+      tempDir,
+      options,
+      processedFiles,
+      baseDir
+    );
+
+    this.logger.verbose(`Transpiled ${resolvedPath} -> ${outputPath}`);
+
+    return outputPath;
+  }
+
+  /**
+   * Use TypeScript's native module resolution to find dependencies
+   */
+  private async transpileDependencies(
+    filePath: string,
+    tempDir: string,
+    options: TranspileOptions,
+    processedFiles: Set<string>,
+    mainFileDir?: string
+  ): Promise<void> {
+    try {
+      // Get TypeScript compiler options
+      const searchPath = dirname(resolve(filePath));
+      const tsConfig = this.tsConfigReader.findAndReadConfig(searchPath);
+
+      const compilerOptions: ts.CompilerOptions = {
+        ...tsConfig.compilerOptions,
+        noEmit: true,
+        skipLibCheck: true,
+        allowSyntheticDefaultImports:
+          tsConfig.compilerOptions.allowSyntheticDefaultImports ?? true,
+        esModuleInterop: tsConfig.compilerOptions.esModuleInterop ?? true,
+      };
+
+      // Create a TypeScript program to analyze dependencies
+      const program = ts.createProgram([filePath], compilerOptions);
+      const sourceFile = program.getSourceFile(filePath);
+
+      if (!sourceFile) {
+        this.logger.warn(`Could not create source file for: ${filePath}`);
+        return;
+      }
+
+      // Use TypeScript's module resolution to find dependencies
+      const dependencies = this.extractDependenciesFromSourceFile(
+        sourceFile,
+        filePath,
+        compilerOptions
+      );
+
+      // Process each resolved dependency
+      for (const dep of dependencies) {
+        if (!processedFiles.has(dep.resolvedPath)) {
+          if (dep.needsTranspilation) {
+            // Transpile TypeScript/TSX files, passing the main file directory
+            await this.transpileFileWithDependencies(
+              dep.resolvedPath,
+              tempDir,
+              options,
+              processedFiles,
+              mainFileDir || dirname(filePath)
+            );
+          } else {
+            // Copy non-TypeScript files as-is
+            await this.copyDependencyFile(
+              dep.resolvedPath,
+              tempDir,
+              filePath,
+              processedFiles
+            );
+          }
+        }
+      }
+    } catch (error) {
+      this.logger.warn(
+        `Failed to analyze dependencies for ${filePath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  /**
+   * Extract dependencies from a TypeScript source file using the compiler API
+   */
+  private extractDependenciesFromSourceFile(
+    sourceFile: ts.SourceFile,
+    containingFile: string,
+    compilerOptions: ts.CompilerOptions
+  ): Array<{ resolvedPath: string; needsTranspilation: boolean }> {
+    const dependencies: Array<{
+      resolvedPath: string;
+      needsTranspilation: boolean;
+    }> = [];
+    const moduleResolutionCache = ts.createModuleResolutionCache(
+      dirname(containingFile),
+      (fileName) => fileName,
+      compilerOptions
+    );
+
+    // Visit all nodes in the source file to find import/export declarations
+    const visit = (node: ts.Node) => {
+      // Handle import declarations
+      if (
+        ts.isImportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const moduleName = node.moduleSpecifier.text;
+        this.resolveAndAddDependency(
+          moduleName,
+          containingFile,
+          compilerOptions,
+          moduleResolutionCache,
+          dependencies
+        );
+      }
+
+      // Handle export declarations with from clause
+      else if (
+        ts.isExportDeclaration(node) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      ) {
+        const moduleName = node.moduleSpecifier.text;
+        this.resolveAndAddDependency(
+          moduleName,
+          containingFile,
+          compilerOptions,
+          moduleResolutionCache,
+          dependencies
+        );
+      }
+
+      // Handle dynamic imports
+      else if (
+        ts.isCallExpression(node) &&
+        node.expression.kind === ts.SyntaxKind.ImportKeyword
+      ) {
+        if (
+          node.arguments.length > 0 &&
+          ts.isStringLiteral(node.arguments[0])
+        ) {
+          const moduleName = node.arguments[0].text;
+          this.resolveAndAddDependency(
+            moduleName,
+            containingFile,
+            compilerOptions,
+            moduleResolutionCache,
+            dependencies
+          );
+        }
+      }
+
+      // Handle require calls
+      else if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === "require" &&
+        node.arguments.length > 0 &&
+        ts.isStringLiteral(node.arguments[0])
+      ) {
+        const moduleName = node.arguments[0].text;
+        this.resolveAndAddDependency(
+          moduleName,
+          containingFile,
+          compilerOptions,
+          moduleResolutionCache,
+          dependencies
+        );
+      }
+
+      ts.forEachChild(node, visit);
+    };
+
+    visit(sourceFile);
+    return dependencies;
+  }
+
+  /**
+   * Resolve a module using TypeScript's module resolution and add to dependencies if it's a relative import
+   */
+  private resolveAndAddDependency(
+    moduleName: string,
+    containingFile: string,
+    compilerOptions: ts.CompilerOptions,
+    moduleResolutionCache: ts.ModuleResolutionCache,
+    dependencies: Array<{ resolvedPath: string; needsTranspilation: boolean }>
+  ): void {
+    // Only process relative imports
+    if (!this.isRelativeImport(moduleName)) {
+      return;
+    }
+
+    try {
+      const resolution = ts.resolveModuleName(
+        moduleName,
+        containingFile,
+        compilerOptions,
+        ts.sys,
+        moduleResolutionCache
+      );
+
+      if (
+        resolution.resolvedModule &&
+        resolution.resolvedModule.resolvedFileName
+      ) {
+        const resolvedPath = resolution.resolvedModule.resolvedFileName;
+        const needsTranspilation = this.isTypeScriptFile(resolvedPath);
+
+        dependencies.push({ resolvedPath, needsTranspilation });
+        this.logger.verbose(
+          `Resolved dependency: ${moduleName} -> ${resolvedPath}`
+        );
+      } else {
+        this.logger.verbose(
+          `Could not resolve module: ${moduleName} from ${containingFile}`
+        );
+      }
+    } catch (error) {
+      this.logger.verbose(
+        `Error resolving module ${moduleName}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
+  }
+
+  /**
+   * Check if a file is a TypeScript file that needs transpilation
+   */
+  private isTypeScriptFile(filePath: string): boolean {
+    const ext = extname(filePath).toLowerCase();
+    return ext === ".ts" || ext === ".tsx";
+  }
+
+  /**
+   * Check if an import path resolves to a TypeScript file
+   */
+  private isTypeScriptImport(importPath: string, sourceDir: string): boolean {
+    const extensions = [".ts", ".tsx"];
+
+    // Try with different TypeScript extensions
+    for (const ext of extensions) {
+      const pathWithExt = resolve(sourceDir, importPath + ext);
+      if (existsSync(pathWithExt)) {
+        return true;
+      }
+    }
+
+    // Try index files
+    for (const ext of extensions) {
+      const indexPath = resolve(sourceDir, importPath, "index" + ext);
+      if (existsSync(indexPath)) {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -438,11 +1099,10 @@ export class TypeScriptTranspiler {
   }
 
   /**
-   * Clean up temporary files
+   * Enhanced cleanup with better temp directory management
    */
   cleanup(): void {
-    const { unlinkSync, existsSync } = require("fs");
-
+    // Clean up individual temp files
     if (this.tempFiles.length > 0) {
       this.logger.verbose(
         `Cleaning up ${this.tempFiles.length} temporary file(s)`
@@ -464,7 +1124,56 @@ export class TypeScriptTranspiler {
       }
     }
 
+    // Clean up temp directories
+    for (const tempDir of this.tempDirs) {
+      try {
+        if (existsSync(tempDir)) {
+          this.cleanupDirectory(tempDir);
+          this.logger.verbose(`Cleaned up temp directory: ${tempDir}`);
+        }
+      } catch (error) {
+        this.logger.warn(
+          `Failed to cleanup temp directory ${tempDir}: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        );
+      }
+    }
+
     this.tempFiles = [];
+    this.tempDirs = [];
+    this.fileMapping.clear();
+    this.currentTempDir = null;
+  }
+
+  /**
+   * Recursively clean up a directory
+   */
+  private cleanupDirectory(dirPath: string): void {
+    const { readdirSync, statSync, rmdirSync } = require("fs");
+
+    try {
+      const files = readdirSync(dirPath);
+
+      for (const file of files) {
+        const fullPath = join(dirPath, file);
+        const stat = statSync(fullPath);
+
+        if (stat.isDirectory()) {
+          this.cleanupDirectory(fullPath);
+        } else {
+          unlinkSync(fullPath);
+        }
+      }
+
+      rmdirSync(dirPath);
+    } catch (error) {
+      this.logger.warn(
+        `Error cleaning directory ${dirPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+    }
   }
 
   /**

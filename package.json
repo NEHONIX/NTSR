@@ -1,6 +1,6 @@
 {
   "name": "ntsr",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "description": "NTSR - Nehonix TypeScript Runner: Simple, bulletproof TypeScript execution without configuration, built-in compilation, and smart fallbacks. Built for 'fortify2-js'.",
   "main": "dist/NTSR.cjs",
   "type": "module",

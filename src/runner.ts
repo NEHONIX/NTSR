@@ -295,20 +295,43 @@ export class NTSRRunner {
         this.logger.verbose(`Set NODE_PATH to: ${env.NODE_PATH}`);
       }
 
+      // Capture stderr to provide better error messages
       const child = spawn("node", [jsPath, ...args], {
-        stdio: "inherit",
+        stdio: ["inherit", "inherit", "pipe"], // Capture stderr for error processing
         shell: true,
         cwd: workingDirectory, // Set working directory for proper module resolution
         env, // Use modified environment with NODE_PATH
       });
 
+      let stderrData = "";
+      if (child.stderr) {
+        child.stderr.on("data", (data) => {
+          const errorText = data.toString();
+          stderrData += errorText;
+
+          // Process and improve error messages in real-time
+          const improvedError = this.improveErrorMessage(
+            errorText,
+            jsPath,
+            originalPath
+          );
+          process.stderr.write(improvedError);
+        });
+      }
+
       child.on("close", (code) => {
         if (code === 0) {
           resolve();
         } else {
-          reject(
-            new Error(`Script exited with code ${code} \n at ${originalPath}`)
+          // Provide enhanced error message with original file path
+          const exitCode = code ?? 1; // Default to 1 if code is null
+          const enhancedError = this.createEnhancedErrorMessage(
+            exitCode,
+            stderrData,
+            originalPath,
+            workingDirectory
           );
+          reject(new Error(enhancedError));
         }
       });
 
@@ -316,6 +339,116 @@ export class NTSRRunner {
         reject(new Error(`Failed to run script: ${error.message}`));
       });
     });
+  }
+
+  /**
+   * Improve error messages by replacing temp file paths with original paths
+   */
+  private improveErrorMessage(
+    errorText: string,
+    tempPath: string,
+    originalPath: string
+  ): string {
+    // Replace temp file path with original file path in error messages
+    const tempFileName = tempPath.replace(/\\/g, "\\\\"); // Escape backslashes for regex
+    const regex = new RegExp(
+      tempFileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      "g"
+    );
+
+    return errorText.replace(regex, originalPath);
+  }
+
+  /**
+   * Create enhanced error message with better debugging information
+   */
+  private createEnhancedErrorMessage(
+    exitCode: number,
+    stderrData: string,
+    originalPath: string,
+    workingDirectory?: string
+  ): string {
+    let errorMessage = `[NTSR] ERROR Script exited with code ${exitCode}`;
+
+    // Add original file path for better debugging
+    errorMessage += `\n at ${originalPath}`;
+
+    // Add working directory context if available
+    if (workingDirectory) {
+      errorMessage += `\n in directory: ${workingDirectory}`;
+    }
+
+    // Analyze stderr for common module resolution issues
+    if (stderrData.includes("Cannot find module")) {
+      const moduleMatch = stderrData.match(/Cannot find module '([^']+)'/);
+      if (moduleMatch) {
+        const moduleName = moduleMatch[1];
+        errorMessage += `\n\n[NTSR] Module Resolution Issue:`;
+        errorMessage += `\n  - Missing module: ${moduleName}`;
+
+        if (moduleName.startsWith("./") || moduleName.startsWith("../")) {
+          errorMessage += `\n  - This is a relative import. Check if the file exists relative to: ${originalPath}`;
+          errorMessage += `\n  - Ensure the file extension is correct (.js, .ts, .json, etc.)`;
+
+          // Try to provide more specific guidance
+          const suggestions = this.suggestModulePaths(moduleName, originalPath);
+          if (suggestions.length > 0) {
+            errorMessage += `\n  - Possible files that might exist:`;
+            suggestions.forEach((suggestion) => {
+              errorMessage += `\n    * ${suggestion}`;
+            });
+          }
+        } else {
+          errorMessage += `\n  - This appears to be a package import. Try: npm install ${moduleName}`;
+        }
+
+        errorMessage += `\n  - Working directory: ${
+          workingDirectory || "not set"
+        }`;
+      }
+    }
+
+    return errorMessage;
+  }
+
+  /**
+   * Suggest possible module paths for relative imports
+   */
+  private suggestModulePaths(
+    moduleName: string,
+    originalPath: string
+  ): string[] {
+    const suggestions: string[] = [];
+    const baseDir = dirname(originalPath);
+
+    // Common extensions to try
+    const extensions = [".js", ".ts", ".json", ".mjs", ".cjs"];
+
+    // If the module name doesn't have an extension, try adding common ones
+    if (!moduleName.includes(".")) {
+      extensions.forEach((ext) => {
+        const fullPath = resolve(baseDir, moduleName + ext);
+        if (existsSync(fullPath)) {
+          suggestions.push(fullPath);
+        }
+      });
+
+      // Also try index files
+      extensions.forEach((ext) => {
+        const indexPath = resolve(baseDir, moduleName, "index" + ext);
+        if (existsSync(indexPath)) {
+          suggestions.push(indexPath);
+        }
+      });
+    } else {
+      // Module name has extension, check if it exists
+      const fullPath = resolve(baseDir, moduleName);
+      if (existsSync(fullPath)) {
+        suggestions.push(fullPath);
+      }
+    }
+
+    return suggestions;
   }
 
   /**

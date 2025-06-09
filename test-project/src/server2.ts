@@ -2,13 +2,15 @@
 // This code should work with the permissive tsconfig.json above
 
 import { createServer } from "fortify2-js";
+import { config } from "./config/fortifyjs.config";
+import { nested_dir_config } from "./dir/sub dir/nested dir/nested_dir.config";
 
-const app = createServer();
- 
+export const app = createServer(nested_dir_config);
+
 // Middleware
 app.middleware({
   rateLimit: {
-    max: 6,
+    max: 1, //  (just for testing)
   },
 });
 
