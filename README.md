@@ -7,7 +7,7 @@
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.0+-blue.svg)](https://www.typescriptlang.org/)
 
 **Professional TypeScript execution with zero configuration**  
-_Built for the Fortify ecosystem - optimized for speed and simplicity_
+_Built for the FortifyJs ecosystem - optimized for speed and simplicity_
 
 </div>
 
@@ -16,7 +16,7 @@ _Built for the Fortify ecosystem - optimized for speed and simplicity_
 ## Key Features
 
 - **Zero Configuration** - Run TypeScript files instantly, no setup required
-- **Real Type Checking** - Full TypeScript compiler API integration with precise error reporting
+- **Type Checking** - Full TypeScript compiler API integration with precise error reporting
 - **Smart Execution Strategy** - Automatically uses tsx → ts-node → bun → built-in transpiler
 - **Professional Output** - Colorized logs, progress indicators, and detailed error messages
 - **High Performance** - Optimized for quick execution with intelligent caching

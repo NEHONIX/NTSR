@@ -1,7 +1,15 @@
+import { __ext_with_comments } from "./__sys__/__allowed_ext__.js";
+import { __banner__ } from "./__sys__/__banner__.js";
 import { __version__ } from "./__sys__/__version.js";
+import { Logger } from "./logger.js";
 import { CLIOptions, ParsedArgs } from "./types";
 
 export class CLIParser {
+  private static logger: Logger;
+  constructor(logger: Logger) {
+    CLIParser.logger = logger.createChild("CLIParser");
+  }
+
   /**
    * Parse command line arguments
    */
@@ -65,12 +73,7 @@ export class CLIParser {
    */
   static showHelp(): void {
     console.log(`
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                    NTSR - Nehonix TypeScript Runner v${__version__}          ║
-║                                                                              ║
-║  Copyright (c) 2024 NEHONIX. Licensed under MIT License.                     ║
-║  Part of the Fortify library ecosystem - optimized for speed and simplicity  ║
-╚══════════════════════════════════════════════════════════════════════════════╝
+${__banner__()}
 
 DISCLAIMER:
   NTSR is primarily designed for the Fortify library ecosystem and optimized
@@ -113,9 +116,7 @@ CONFIGURATION:
   • Required options (noEmit, skipLibCheck) are always enforced for performance
 
 SUPPORTED FILE TYPES:
-  .ts, .tsx          TypeScript files
-  .js, .jsx, .mjs    JavaScript files (run directly)
-  .cjs               CommonJS files (run directly)
+ ${__ext_with_comments.map((e) => `  ${e.ext} - ${e.comment}`).join("\n")}
 
 EXECUTION STRATEGY:
   1. tsx (recommended - best compatibility and full type checking)
@@ -125,7 +126,7 @@ EXECUTION STRATEGY:
 
 TYPE CHECKING:
   • External runners: Full TypeScript type checking with your tsconfig.json
-  • Built-in mode: Real TypeScript compiler API with precise error reporting
+  • Built-in mode: TypeScript compiler API with precise error reporting
   • Use --force-builtin for strict type validation before execution
 
 INSTALLATION OF EXTERNAL RUNNERS:
@@ -136,24 +137,17 @@ Part of the Fortify ecosystem: https://github.com/NEHONIX/FortifyJS.git
 `);
   }
 
+  private static showBanner(): void {
+    console.log(__banner__());
+  }
   /**
    * Show version information
    */
   static showVersion(): void {
+    CLIParser.showBanner();
     console.log(`
-╔══════════════════════════════════════════════════════════════════════════════╗
-║                    NTSR - Nehonix TypeScript Runner v${__version__}          ║
-║                                                                              ║
-║     Copyright (c) ${new Date().getFullYear()} NEHONIX. Licensed under        ║
-║      MIT License.                                                            ║
-║     Part of the Fortify library ecosystem - optimized for speed and          ║
-║      simplicity                                                              ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
   Built with:
-    • TypeScript Compiler API for precise type checking
-    • esbuild for fast transpilation and bundling
-    • picocolors for enhanced terminal output
+    • TypeScript Compiler API for precise type checking (see: https://github.com/microsoft/TypeScript)
 
   Designed for the Fortify ecosystem: https://github.com/NEHONIX/FortifyJS.git
   Source code: https://github.com/NEHONIX/NTSR

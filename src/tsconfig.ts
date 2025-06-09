@@ -20,14 +20,18 @@ export class TSConfigReader {
    * Find and read tsconfig.json following TypeScript's resolution rules
    */
   findAndReadConfig(searchPath: string = process.cwd()): TSConfigResult {
+    this.logger.verbose(`Starting tsconfig search from: ${searchPath}`);
+
     const configPath = this.findConfigFile(searchPath);
-    
+
     if (configPath) {
       this.logger.verbose(`Found tsconfig.json at: ${configPath}`);
       return this.readConfigFile(configPath);
     }
 
-    this.logger.verbose("No tsconfig.json found, using default compiler options");
+    this.logger.verbose(
+      "No tsconfig.json found, using default compiler options"
+    );
     return {
       compilerOptions: this.getDefaultCompilerOptions(),
       isDefault: true,
@@ -46,10 +50,17 @@ export class TSConfigReader {
    */
   private readConfigFile(configPath: string): TSConfigResult {
     try {
+      this.logger.verbose(`Reading tsconfig file: ${configPath}`);
+
       const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
-      
+
       if (configFile.error) {
-        this.logger.warn(`Error reading tsconfig.json: ${ts.flattenDiagnosticMessageText(configFile.error.messageText, '\n')}`);
+        this.logger.warn(
+          `Error reading tsconfig.json: ${ts.flattenDiagnosticMessageText(
+            configFile.error.messageText,
+            "\n"
+          )}`
+        );
         return {
           compilerOptions: this.getDefaultCompilerOptions(),
           configPath,
@@ -65,13 +76,17 @@ export class TSConfigReader {
 
       if (parsedConfig.errors.length > 0) {
         this.logger.warn("Errors in tsconfig.json:");
-        parsedConfig.errors.forEach(error => {
-          this.logger.warn(`  ${ts.flattenDiagnosticMessageText(error.messageText, '\n')}`);
+        parsedConfig.errors.forEach((error) => {
+          this.logger.warn(
+            `  ${ts.flattenDiagnosticMessageText(error.messageText, "\n")}`
+          );
         });
       }
 
       // Merge with our required options for NTSR
-      const compilerOptions = this.mergeWithRequiredOptions(parsedConfig.options);
+      const compilerOptions = this.mergeWithRequiredOptions(
+        parsedConfig.options
+      );
 
       this.logger.verbose(`Loaded compiler options from ${configPath}`);
       return {
@@ -80,7 +95,11 @@ export class TSConfigReader {
         isDefault: false,
       };
     } catch (error) {
-      this.logger.warn(`Failed to read tsconfig.json: ${error instanceof Error ? error.message : String(error)}`);
+      this.logger.warn(
+        `Failed to read tsconfig.json: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
       return {
         compilerOptions: this.getDefaultCompilerOptions(),
         configPath,
@@ -90,27 +109,16 @@ export class TSConfigReader {
   }
 
   /**
-   * Get default compiler options for NTSR
+   * Get default compiler options for NTSR (less strict, more permissive)
    */
   private getDefaultCompilerOptions(): ts.CompilerOptions {
     return {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext,
       lib: ["ES2022", "DOM"],
-      strict: true,
-      noImplicitAny: true,
-      strictNullChecks: true,
-      strictFunctionTypes: true,
-      strictBindCallApply: true,
-      strictPropertyInitialization: true,
-      noImplicitReturns: true,
-      noFallthroughCasesInSwitch: true,
-      noUncheckedIndexedAccess: true,
-      exactOptionalPropertyTypes: true,
-      noImplicitOverride: true,
-      noPropertyAccessFromIndexSignature: true,
-      allowUnusedLabels: false,
-      allowUnreachableCode: false,
+      strict: false, // Don't force strict mode
+      noImplicitAny: false, // Allow implicit any
+      strictNullChecks: false, // Don't force strict null checks
       skipLibCheck: true, // For performance
       declaration: false,
       declarationMap: false,
@@ -126,9 +134,54 @@ export class TSConfigReader {
   }
 
   /**
+   * Get appropriate lib configuration based on target
+   */
+  private getLibForTarget(target: ts.ScriptTarget | string): string[] {
+    const targetStr =
+      typeof target === "string"
+        ? target.toLowerCase()
+        : ts.ScriptTarget[target].toLowerCase();
+
+    // Base libs that should always be included for modern TypeScript
+    const baseLibs = ["ES6", "ES2015"];
+
+    // Add libs based on target
+    if (
+      targetStr.includes("es2022") ||
+      targetStr.includes("es2021") ||
+      targetStr.includes("es2020")
+    ) {
+      return [
+        ...baseLibs,
+        "ES2017",
+        "ES2018",
+        "ES2019",
+        "ES2020",
+        "ES2021",
+        "ES2022",
+        "DOM",
+        "DOM.Iterable",
+      ];
+    } else if (
+      targetStr.includes("es2019") ||
+      targetStr.includes("es2018") ||
+      targetStr.includes("es2017")
+    ) {
+      return [...baseLibs, "ES2017", "ES2018", "ES2019", "DOM", "DOM.Iterable"];
+    } else if (targetStr.includes("es2016")) {
+      return [...baseLibs, "ES2016", "DOM"];
+    }
+
+    // Default for older targets
+    return [...baseLibs, "DOM"];
+  }
+
+  /**
    * Merge user's compiler options with required NTSR options
    */
-  private mergeWithRequiredOptions(userOptions: ts.CompilerOptions): ts.CompilerOptions {
+  private mergeWithRequiredOptions(
+    userOptions: ts.CompilerOptions
+  ): ts.CompilerOptions {
     // These options are required for NTSR to work correctly
     const requiredOptions: ts.CompilerOptions = {
       noEmit: true, // We handle emit ourselves
@@ -137,9 +190,20 @@ export class TSConfigReader {
       esModuleInterop: true,
     };
 
+    // If user didn't specify lib but has a target, provide appropriate lib
+    let enhancedUserOptions = { ...userOptions };
+    if (!userOptions.lib && userOptions.target) {
+      enhancedUserOptions.lib = this.getLibForTarget(userOptions.target);
+      this.logger.verbose(
+        `Auto-generated lib configuration for target ${
+          ts.ScriptTarget[userOptions.target]
+        }: ${enhancedUserOptions.lib.join(", ")}`
+      );
+    }
+
     // Merge user options with required options (required options take precedence)
     return {
-      ...userOptions,
+      ...enhancedUserOptions,
       ...requiredOptions,
     };
   }
@@ -165,7 +229,9 @@ export class TSConfigReader {
     const warnings: string[] = [];
 
     if (options.noEmit === false) {
-      warnings.push("noEmit is set to false, but NTSR handles compilation internally");
+      warnings.push(
+        "noEmit is set to false, but NTSR handles compilation internally"
+      );
     }
 
     if (options.skipLibCheck === false) {
@@ -173,7 +239,9 @@ export class TSConfigReader {
     }
 
     if (!options.allowSyntheticDefaultImports && !options.esModuleInterop) {
-      warnings.push("Consider enabling allowSyntheticDefaultImports or esModuleInterop for better module compatibility");
+      warnings.push(
+        "Consider enabling allowSyntheticDefaultImports or esModuleInterop for better module compatibility"
+      );
     }
 
     return warnings;

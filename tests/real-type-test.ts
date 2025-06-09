@@ -1,4 +1,4 @@
-// Real TypeScript type checking test
+// TypeScript type checking test
 
 // 1. Basic type error
 const message: strins = "Hello"; // Should catch: strins -> string
@@ -13,7 +13,7 @@ interface Person {
 const person: Person = {
   name: "John",
   age: "30", // Should catch: string assigned to number
-  active: true
+  active: true,
 };
 
 // 3. Array type errors
@@ -32,4 +32,3 @@ function greet(name: string, age: number): void {
 greet("Alice", "25"); // Should catch: string passed to number parameter
 
 console.log(message, person, numbers, getName());
- 

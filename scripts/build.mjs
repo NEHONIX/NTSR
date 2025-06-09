@@ -45,7 +45,7 @@ function runCommand(command, args, options = {}) {
 
 try {
   // Clean previous build
-  const distDir = join(__dirname, "dist");
+  const distDir = join(__dirname, "..", "dist");
   if (existsSync(distDir)) {
     rmSync(distDir, { recursive: true, force: true });
     console.log("🧹 Cleaned previous build");
@@ -78,13 +78,22 @@ try {
   let bundledCode = readFileSync(bundledPath, "utf8");
   console.log("📖 Read bundled code");
 
+  // Read package.json to get version
+  const packageJsonPath = join(__dirname, "..", "package.json");
+  const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf8"));
+  const version = packageJson.version;
+  console.log(`📦 Embedding version: ${version}`);
+
   // Remove any existing shebang from the bundled code
   bundledCode = bundledCode.replace(/^#!.*\n/, "");
+
+  // Inject version directly into the code to avoid runtime package.json lookup
+  bundledCode = bundledCode.replace(/BUILD_VERSION_PLACEHOLDER/g, version);
 
   // Create the final executable with proper shebang and suppress warnings
   const finalCode = `#!/usr/bin/env node --no-deprecation
 
-// NTSR - Nehonix TypeScript Runner
+// NTSR - Nehonix TypeScript Runner v${version}
 // Built on ${new Date().toISOString()}
 
 ${bundledCode}`;

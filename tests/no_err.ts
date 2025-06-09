@@ -1,5 +1,5 @@
 interface Person {
-  name: string;
+  name: strings;
   age: number;
 }
 

@@ -63,7 +63,7 @@ class NTSRTester {
   // Run NTSR command and capture output
   async runNTSR(args, expectSuccess = true) {
     return new Promise((resolve) => {
-      const ntsrPath = join(__dirname, "dist", "NTSR.cjs");
+      const ntsrPath = join(__dirname, "..", "dist", "NTSR.cjs");
       const child = spawn("node", [ntsrPath, ...args], {
         stdio: "pipe",
         shell: true,
@@ -302,7 +302,7 @@ console.log('Process args:', process.argv.slice(2).join(' '));
     console.log("🧪 Starting NTSR tests...\n");
 
     // Check if NTSR is built
-    const ntsrPath = join(__dirname, "dist", "NTSR.cjs");
+    const ntsrPath = join(__dirname, "..", "dist", "NTSR.cjs");
     if (!existsSync(ntsrPath)) {
       this.error('NTSR not built. Run "npm run build" first.');
       return false;

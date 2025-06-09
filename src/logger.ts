@@ -83,7 +83,7 @@ export class Logger {
   error(message: string): void {
     if (this.options.level >= LogLevel.ERROR) {
       const formatted = this.formatMessage("ERROR", message, pc.red);
-      throw new Error(formatted);
+      console.error(formatted);
     }
   }
 

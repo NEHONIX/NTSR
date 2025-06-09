@@ -1,0 +1,1 @@
+export const __transpiler_version__ = "2.0.0";
