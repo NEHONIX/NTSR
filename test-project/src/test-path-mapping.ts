@@ -7,9 +7,7 @@ console.log("✅ Successfully imported from @/server2");
 console.log("✅ Successfully imported from ./config/fortifyjs.config");
 
 // Test the imported modules
-if (app) {
-  console.log("✅ App object is available");
-}
+console.log("✅ App object is available");
 
 if (config) {
   console.log("✅ Config object is available");
