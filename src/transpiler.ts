@@ -322,6 +322,65 @@ export class TypeScriptTranspiler {
   }
 
   /**
+   * Check if an import path uses path mapping (like @/...)
+   */
+  private isPathMappedImport(importPath: string): boolean {
+    // Common path mapping patterns
+    return (
+      importPath.startsWith("@/") ||
+      importPath.startsWith("~/") ||
+      importPath.startsWith("#/") ||
+      // Check for other common alias patterns
+      (/^[a-zA-Z][a-zA-Z0-9]*\//.test(importPath) &&
+        !importPath.includes("node_modules"))
+    );
+  }
+
+  /**
+   * Resolve a path-mapped import using TypeScript's module resolution
+   */
+  private resolvePathMappedImport(
+    importPath: string,
+    containingFile: string
+  ): string | null {
+    try {
+      // Get TypeScript compiler options with path mapping
+      const searchPath = dirname(resolve(containingFile));
+      const tsConfig = this.tsConfigReader.findAndReadConfig(searchPath);
+
+      const compilerOptions: ts.CompilerOptions = {
+        ...tsConfig.compilerOptions,
+        noEmit: true,
+        skipLibCheck: true,
+      };
+
+      // Use TypeScript's module resolution to resolve the path-mapped import
+      const resolution = ts.resolveModuleName(
+        importPath,
+        containingFile,
+        compilerOptions,
+        ts.sys
+      );
+
+      if (
+        resolution.resolvedModule &&
+        resolution.resolvedModule.resolvedFileName
+      ) {
+        return resolution.resolvedModule.resolvedFileName;
+      }
+
+      return null;
+    } catch (error) {
+      this.logger.verbose(
+        `Failed to resolve path-mapped import ${importPath}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      );
+      return null;
+    }
+  }
+
+  /**
    * Preprocess imports to ensure correct extensions for transpiled files
    */
   private preprocessImportsForTranspilation(
@@ -341,21 +400,58 @@ export class TypeScriptTranspiler {
     processedCode = processedCode.replace(
       importExportRegex,
       (match, importPath) => {
-        if (!importPath || !this.isRelativeImport(importPath)) {
+        if (!importPath) {
           return match;
         }
 
-        // Check if this import resolves to a TypeScript file that will be transpiled
-        if (this.isTypeScriptImport(importPath, sourceDir)) {
-          // Replace with the correct extension for the transpiled file
-          const targetExt =
-            format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
-          const newImportPath = importPath + targetExt;
-          const updatedMatch = match.replace(importPath, newImportPath);
-          this.logger.verbose(
-            `Rewriting import: ${importPath} -> ${newImportPath}`
+        // Handle relative imports
+        if (this.isRelativeImport(importPath)) {
+          if (this.isTypeScriptImport(importPath, sourceDir)) {
+            const targetExt =
+              format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+            const newImportPath = importPath + targetExt;
+            const updatedMatch = match.replace(importPath, newImportPath);
+            this.logger.verbose(
+              `Rewriting relative import: ${importPath} -> ${newImportPath}`
+            );
+            return updatedMatch;
+          }
+        }
+
+        // Handle path-mapped imports (like @/...)
+        else if (this.isPathMappedImport(importPath)) {
+          const resolvedPath = this.resolvePathMappedImport(
+            importPath,
+            filename
           );
-          return updatedMatch;
+          if (resolvedPath && this.isTypeScriptFile(resolvedPath)) {
+            // Convert the resolved absolute path back to a relative path from the source file
+            const sourceDir = dirname(resolve(filename));
+            const relativePath = relative(sourceDir, resolvedPath);
+
+            // Normalize path separators for cross-platform compatibility
+            const normalizedRelativePath = relativePath.replace(/\\/g, "/");
+
+            // Ensure it starts with ./ if it's not already relative
+            const relativeImportPath = normalizedRelativePath.startsWith(".")
+              ? normalizedRelativePath
+              : "./" + normalizedRelativePath;
+
+            // Remove the original extension and add the target extension
+            const pathWithoutExt = relativeImportPath.replace(
+              /\.(ts|tsx)$/,
+              ""
+            );
+            const targetExt =
+              format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+            const newImportPath = pathWithoutExt + targetExt;
+
+            const updatedMatch = match.replace(importPath, newImportPath);
+            this.logger.verbose(
+              `Rewriting path-mapped import: ${importPath} -> ${newImportPath} (resolved via ${resolvedPath})`
+            );
+            return updatedMatch;
+          }
         }
 
         return match;
@@ -366,21 +462,58 @@ export class TypeScriptTranspiler {
     processedCode = processedCode.replace(
       requireRegex,
       (match, requirePath) => {
-        if (!requirePath || !this.isRelativeImport(requirePath)) {
+        if (!requirePath) {
           return match;
         }
 
-        // Check if this require resolves to a TypeScript file that will be transpiled
-        if (this.isTypeScriptImport(requirePath, sourceDir)) {
-          // Replace with the correct extension for the transpiled file
-          const targetExt =
-            format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
-          const newRequirePath = requirePath + targetExt;
-          const updatedMatch = match.replace(requirePath, newRequirePath);
-          this.logger.verbose(
-            `Rewriting require: ${requirePath} -> ${newRequirePath}`
+        // Handle relative requires
+        if (this.isRelativeImport(requirePath)) {
+          if (this.isTypeScriptImport(requirePath, sourceDir)) {
+            const targetExt =
+              format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+            const newRequirePath = requirePath + targetExt;
+            const updatedMatch = match.replace(requirePath, newRequirePath);
+            this.logger.verbose(
+              `Rewriting relative require: ${requirePath} -> ${newRequirePath}`
+            );
+            return updatedMatch;
+          }
+        }
+
+        // Handle path-mapped requires (like @/...)
+        else if (this.isPathMappedImport(requirePath)) {
+          const resolvedPath = this.resolvePathMappedImport(
+            requirePath,
+            filename
           );
-          return updatedMatch;
+          if (resolvedPath && this.isTypeScriptFile(resolvedPath)) {
+            // Convert the resolved absolute path back to a relative path from the source file
+            const sourceDir = dirname(resolve(filename));
+            const relativePath = relative(sourceDir, resolvedPath);
+
+            // Normalize path separators for cross-platform compatibility
+            const normalizedRelativePath = relativePath.replace(/\\/g, "/");
+
+            // Ensure it starts with ./ if it's not already relative
+            const relativeRequirePath = normalizedRelativePath.startsWith(".")
+              ? normalizedRelativePath
+              : "./" + normalizedRelativePath;
+
+            // Remove the original extension and add the target extension
+            const pathWithoutExt = relativeRequirePath.replace(
+              /\.(ts|tsx)$/,
+              ""
+            );
+            const targetExt =
+              format === "cjs" ? ".cjs" : format === "esm" ? ".mjs" : ".js";
+            const newRequirePath = pathWithoutExt + targetExt;
+
+            const updatedMatch = match.replace(requirePath, newRequirePath);
+            this.logger.verbose(
+              `Rewriting path-mapped require: ${requirePath} -> ${newRequirePath} (resolved via ${resolvedPath})`
+            );
+            return updatedMatch;
+          }
         }
 
         return match;
@@ -1010,7 +1143,7 @@ export class TypeScriptTranspiler {
   }
 
   /**
-   * Resolve a module using TypeScript's module resolution and add to dependencies if it's a relative import
+   * Resolve a module using TypeScript's module resolution and add to dependencies if it's a local import
    */
   private resolveAndAddDependency(
     moduleName: string,
@@ -1019,8 +1152,11 @@ export class TypeScriptTranspiler {
     moduleResolutionCache: ts.ModuleResolutionCache,
     dependencies: Array<{ resolvedPath: string; needsTranspilation: boolean }>
   ): void {
-    // Only process relative imports
-    if (!this.isRelativeImport(moduleName)) {
+    // Process relative imports and path-mapped imports (like @/...)
+    if (
+      !this.isRelativeImport(moduleName) &&
+      !this.isPathMappedImport(moduleName)
+    ) {
       return;
     }
 

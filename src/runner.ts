@@ -556,7 +556,7 @@ export class NTSRRunner {
           }
         }
       } else {
-        this.logger.info(
+        this.logger.verbose(
           "Skipping external runners (--force-builtin specified)"
         );
       }
